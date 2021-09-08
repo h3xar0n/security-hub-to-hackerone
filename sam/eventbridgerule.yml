@@ -1,56 +1,57 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
-Description: EventBridge Lambda for HackerOne
-Parameters:
-  PartnerEventSource:
-    Description: Security Hub to HackerOne
-    Type: String
-    Default: 'aws.partner'
-  
+Description: EventBridge Rule for sending Security Hub reports to HackerOne
+
+# Inputs:
+  # Username
+  # Password
+  # CustomSecurityHubAction
+
 Globals:
   Function:
     Timeout: 3
 
 Resources:
-  myeventfunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: eventLambda/
-      Handler: index.handler
-      Runtime: nodejs12.x
-      FunctionName: myeventfunction
-      
-  PartnerEventBus: 
-    Type: AWS::Events::EventBus
+  # HackerOneAPIToken
+  # Type: SecretsManagerSecret
+  HackerOneConnection:
+    Type: AWS::Events::Connection
     Properties: 
-      EventSourceName: !Ref PartnerEventSource
-      Name: !Ref PartnerEventSource
-
-  myeventrule:
-    Type: 'AWS::Events::Rule'
+      AuthorizationType: BASIC
+      AuthParameters:
+        BasicAuthParameters: 
+          Password: '{{resolve:secretsmanager:HackerOneAPIToken.Arn}}'
+          Username: Username.Input
+      Description: Auth connection for HackerOne API
+      Name: HackerOneConnection
+  HackerOneApiDestination:
+    Type: AWS::Events::ApiDestination
+    Properties: 
+      ConnectionArn: !Ref HackerOneConnection.Arn
+      Description: HackerOne API Destination
+      HttpMethod: POST
+      InvocationEndpoint: https://api.hackerone.com/v1/reports
+      InvocationRateLimitPerSecond: 100
+      Name: HackerOneApiDestination
+  HackerOneRule:
+    Type: AWS::Events::Rule
     Properties:
-      Description: Test Events Rule
-      EventBusName: !Ref PartnerEventSource
+      Description: A rule to send events to HackerOne
       EventPattern: 
-        account: [!Ref AWS::AccountId]
-      Name: myeventrule
+        source: 
+          - aws.securityhub
+        detail-type: 
+          - Security Hub Findings - Custom Action
+        resources:
+          - CustomSecurityHubAction.Arn
+      Name: HackerOneRule
       State: ENABLED
       Targets:
        - 
          Arn: 
            Fn::GetAtt:
-             - "myeventfunction"
+             - "HackerOneApiDestination"
              - "Arn"
          Id: "idmyeventrule"
-         
-  PermissionForEventsToInvokeLambda: 
-    Type: AWS::Lambda::Permission
-    Properties: 
-      FunctionName: 
-        Ref: "myeventfunction"
-      Action: "lambda:InvokeFunction"
-      Principal: "events.amazonaws.com"
-      SourceArn: 
-        Fn::GetAtt: 
-          - "myeventrule"
-          - "Arn"    
+         RetryPolicy:
+           MaximumRetryAttempts: 4
+           MaximumEventAgeInSeconds: 400
